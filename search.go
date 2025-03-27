@@ -67,7 +67,7 @@ func Search(
 		queryBuilder.WriteString(")")
 	}
 
-	queryBuilder.WriteString(fmt.Sprintf(" AND id != %v", MyID))
+	fmt.Fprintf(&queryBuilder, " AND user != %v", MyID)
 
 	// Finalize the SQL query with sorting and limit
 	queryBuilder.WriteString(" ORDER BY priority DESC LIMIT 1")
