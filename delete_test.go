@@ -33,7 +33,7 @@ func TestDeleteUserByID(t *testing.T) {
 	}
 
 	// Verify the record no longer exists
-	result, err := Search("en", 18, 30, 1, 1, 25)
+	result, err := Search(2, "en", 18, 30, 1, 1, 25)
 	if err != nil {
 		t.Fatalf("Error during search: %v", err)
 	}

@@ -12,6 +12,7 @@ type SearchResult struct {
 }
 
 func Search(
+	MyID uint64,
 	Language string,
 	YourStart int,
 	YourEnd int,
@@ -65,6 +66,8 @@ func Search(
 		}
 		queryBuilder.WriteString(")")
 	}
+
+	queryBuilder.WriteString(fmt.Sprintf(" AND id != %v", MyID))
 
 	// Finalize the SQL query with sorting and limit
 	queryBuilder.WriteString(" ORDER BY priority DESC LIMIT 1")
