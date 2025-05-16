@@ -1,10 +1,9 @@
 package search
 
 import (
-	"context"
+	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 )
 
 type SearchResult struct {
@@ -41,12 +40,12 @@ func Search(
 	`)
 
 	args = append(args,
-		Language,      
-		MyAge,         
-		MySex, MySex,  
-		YourStart, YourEnd, 
-		YourSex, YourSex,   
-		MyID,      
+		Language,
+		MyAge,
+		MySex, MySex,
+		YourStart, YourEnd,
+		YourSex, YourSex,
+		MyID,
 	)
 
 	// Interests
@@ -69,22 +68,45 @@ func Search(
 
 	queryBuilder.WriteString(" ORDER BY priority DESC LIMIT 1")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	// Use the passed context to ensure consistent timeout management
+	return query(Params{
+		Query: queryBuilder.String(),
+		Args:  args,
+	}, func(rows *sql.Rows) (*SearchResult, error) {
 
-	rows, err := core.sql.QueryContext(ctx, queryBuilder.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("query error: %w", err)
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		var item SearchResult
-		if err := rows.Scan(&item.ID, &item.UserID); err != nil {
-			return nil, fmt.Errorf("scan error: %w", err)
+		// Process the SQL result
+		if rows.Next() {
+			item := new(SearchResult)
+			err := rows.Scan(
+				&item.ID,
+				&item.UserID,
+			)
+			if err != nil {
+				return nil, err
+			}
+			return item, nil
 		}
-		return &item, nil
-	}
+
+		// Return nil if no records are found
+		return nil, nil
+	})
+
+	// ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// defer cancel()
+
+	// rows, err := core.sql.QueryContext(ctx, queryBuilder.String(), args...)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("query error: %w", err)
+	// }
+	// defer rows.Close()
+
+	// if rows.Next() {
+	// 	var item SearchResult
+	// 	if err := rows.Scan(&item.ID, &item.UserID); err != nil {
+	// 		return nil, fmt.Errorf("scan error: %w", err)
+	// 	}
+	// 	return &item, nil
+	// }
 
 	return nil, nil
 }
