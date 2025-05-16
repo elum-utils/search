@@ -84,6 +84,9 @@ func Search(
 			if err != nil {
 				return nil, err
 			}
+			if item.UserID != 0 {
+				Delete(item.UserID)
+			}
 			return item, nil
 		}
 
@@ -91,22 +94,4 @@ func Search(
 		return nil, nil
 	})
 
-	// ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	// defer cancel()
-
-	// rows, err := core.sql.QueryContext(ctx, queryBuilder.String(), args...)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("query error: %w", err)
-	// }
-	// defer rows.Close()
-
-	// if rows.Next() {
-	// 	var item SearchResult
-	// 	if err := rows.Scan(&item.ID, &item.UserID); err != nil {
-	// 		return nil, fmt.Errorf("scan error: %w", err)
-	// 	}
-	// 	return &item, nil
-	// }
-
-	return nil, nil
 }
