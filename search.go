@@ -1,9 +1,10 @@
 package search
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type SearchResult struct {
@@ -12,96 +13,78 @@ type SearchResult struct {
 }
 
 func Search(
-    MyID uint64,
-    Language string,
-    YourStart int,
-    YourEnd int,
-    YourSex int,
-    MySex int,
-    MyAge int,
-    interests ...string,
+	MyID uint64,
+	Language string,
+	YourStart int,
+	YourEnd int,
+	YourSex int,
+	MyAge int,
+	MySex int,
+	interests ...string,
 ) (*SearchResult, error) {
+	if core == nil || core.sql == nil {
+		return nil, ErrNotInitialize
+	}
 
-    // Check if core is initialized
-    if core == nil || core.sql == nil {
-        return nil, ErrNotInitialize
-    }
+	var queryBuilder strings.Builder
+	var args []interface{}
 
-    // Use strings.Builder for constructing the query
-    var queryBuilder strings.Builder
+	queryBuilder.WriteString(`
+		SELECT id, user
+		FROM search
+		WHERE language = ?
+		AND ? BETWEEN your_start AND your_end        
+		AND (? = 2 OR your_sex = ? OR your_sex = 2)    
+		AND my_age BETWEEN ? AND ?                     
+		AND (? = 2 OR my_sex = ? OR my_sex = 2)       
+		AND user != ?                                
+	`)
 
-    queryBuilder.WriteString(`SELECT id, user FROM search WHERE 
-      language = ?
-      AND ? BETWEEN your_start AND your_end
-      AND my_age BETWEEN ? AND ?`)
-    
-    // Add condition based on YourSex
-    if YourSex != 2 {
-        queryBuilder.WriteString(" AND (your_sex = ? OR your_sex = 2)")
-    } else {
-        queryBuilder.WriteString(" AND (your_sex = 0 OR your_sex = 1 OR your_sex = 2)")
-    }
+	args = append(args,
+		Language,      
+		MyAge,         
+		MySex, MySex,  
+		YourStart, YourEnd, 
+		YourSex, YourSex,   
+		MyID,      
+	)
 
-    if MySex != 2 {
-        queryBuilder.WriteString(" AND (my_sex = ?)")
-    }
+	// Interests
+	if len(interests) > 0 {
+		var validInterests []string
+		for _, interest := range interests {
+			if core.interests[interest] {
+				validInterests = append(validInterests, fmt.Sprintf("(%s = 1)", interest))
+			}
+		}
 
-    // Populate arguments for the SQL query
-    args := []interface{}{
-        Language,
-        MyAge,
-        YourStart,
-        YourEnd,
-    }
+		if len(validInterests) > 0 {
+			queryBuilder.WriteString(" AND (")
+			queryBuilder.WriteString(strings.Join(validInterests, " OR "))
+			queryBuilder.WriteString(")")
+		} else {
+			return nil, nil
+		}
+	}
 
-    if YourSex != 2 {
-        args = append(args, YourSex)
-    }
-    if MySex != 2 {
-        args = append(args, MySex)
-    }
+	queryBuilder.WriteString(" ORDER BY priority DESC LIMIT 1")
 
-    // Process interests and filter them through the map of valid interests
-    if len(interests) > 0 {
-        queryBuilder.WriteString(" AND (")
-        first := true
-        for _, interest := range interests {
-            if core.interests[interest] { // Validate against the map
-                if !first {
-                    queryBuilder.WriteString(" OR ")
-                }
-                fmt.Fprintf(&queryBuilder, "(%s = 1)", interest)
-                first = false
-            }
-        }
-        queryBuilder.WriteString(")")
-    }
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
-    fmt.Fprintf(&queryBuilder, " AND user != %v", MyID)
+	rows, err := core.sql.QueryContext(ctx, queryBuilder.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("query error: %w", err)
+	}
+	defer rows.Close()
 
-    // Finalize the SQL query with sorting and limit
-    queryBuilder.WriteString(" ORDER BY priority DESC LIMIT 1")
+	if rows.Next() {
+		var item SearchResult
+		if err := rows.Scan(&item.ID, &item.UserID); err != nil {
+			return nil, fmt.Errorf("scan error: %w", err)
+		}
+		return &item, nil
+	}
 
-    // Use the passed context to ensure consistent timeout management
-    return query(Params{
-        Query: queryBuilder.String(),
-        Args:  args,
-    }, func(rows *sql.Rows) (*SearchResult, error) {
-
-        // Process the SQL result
-        if rows.Next() {
-            item := new(SearchResult)
-            err := rows.Scan(
-                &item.ID,
-                &item.UserID,
-            )
-            if err != nil {
-                return nil, err
-            }
-            return item, nil
-        }
-
-        // Return nil if no records are found
-        return nil, nil
-    })
+	return nil, nil
 }
