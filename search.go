@@ -24,21 +24,20 @@ type memoryStore struct {
 	index   map[string]map[int]map[uint64]*SearchEntry
 }
 
-var store *memoryStore
-
-func New() error {
-	store = &memoryStore{
-		entries: make(map[uint64]*SearchEntry),
-		index:   make(map[string]map[int]map[uint64]*SearchEntry),
-	}
-	return nil
+var store *memoryStore = &memoryStore{
+	entries: make(map[uint64]*SearchEntry),
+	index:   make(map[string]map[int]map[uint64]*SearchEntry),
 }
 
 func Close() {
 	store.Lock()
 	defer store.Unlock()
-	store.entries = make(map[uint64]*SearchEntry)
-	store.index = make(map[string]map[int]map[uint64]*SearchEntry)
+
+	store = &memoryStore{
+		entries: make(map[uint64]*SearchEntry),
+		index:   make(map[string]map[int]map[uint64]*SearchEntry),
+	}
+
 }
 
 func Create(

@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-func TestMain(m *testing.M) {
-	// Initialization before all tests
-	err := New()
-	if err != nil {
-		panic("Initialization failed: " + err.Error())
-	}
-	defer Close()
-
-	m.Run()
-}
-
 func TestCreateAndDelete(t *testing.T) {
 	// Create a record
 	Create(10, "ru", 20, 40, 1, 30, 0, false, "music", "art")
@@ -118,7 +107,6 @@ func TestSearchAllConditions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Reset store for each test
 			Close()
-			New()
 			defer Close()
 
 			if tc.setup != nil {
@@ -158,18 +146,6 @@ func TestSearchAllConditions(t *testing.T) {
 	}
 }
 
-func TestNewAndClose(t *testing.T) {
-	err := New()
-	if err != nil {
-		t.Errorf("New() returned error: %v", err)
-	}
-
-	Close()
-	if len(store.entries) != 0 {
-		t.Error("Store was not cleared after Close()")
-	}
-}
-
 func TestEdgeCases(t *testing.T) {
 	// User with no interests
 	Create(11, "en", 18, 30, 1, 25, 0, false)
@@ -186,7 +162,6 @@ func TestEdgeCases(t *testing.T) {
 
 func TestRaceConditions(t *testing.T) {
 	Close()
-	New()
 	defer Close()
 
 	done := make(chan bool)
@@ -223,7 +198,6 @@ func TestRaceConditions(t *testing.T) {
 
 // Benchmark how fast we can create N users
 func BenchmarkCreate(b *testing.B) {
-	New()
 	defer Close()
 
 	b.ResetTimer()
@@ -234,7 +208,6 @@ func BenchmarkCreate(b *testing.B) {
 
 // Benchmark search performance with only 1 user in the system
 func BenchmarkSearchSingleUser(b *testing.B) {
-	New()
 	defer Close()
 
 	Create(1, "en", 18, 30, 1, 25, 0, false, "music", "art")
@@ -247,7 +220,6 @@ func BenchmarkSearchSingleUser(b *testing.B) {
 
 // Benchmark search with many users (1000)
 func BenchmarkSearchMultipleUsers(b *testing.B) {
-	New()
 	defer Close()
 
 	for i := 0; i < 1000; i++ {
@@ -263,7 +235,6 @@ func BenchmarkSearchMultipleUsers(b *testing.B) {
 
 // Benchmark with many interests on both sides
 func BenchmarkSearchWithManyInterests(b *testing.B) {
-	New()
 	defer Close()
 
 	for i := 0; i < 1000; i++ {
@@ -289,7 +260,6 @@ func BenchmarkSearchWithManyInterests(b *testing.B) {
 
 // Benchmark concurrent Create + Search to simulate real-world parallel load
 func BenchmarkConcurrentCreateAndSearch(b *testing.B) {
-	New()
 	defer Close()
 
 	var wg sync.WaitGroup
@@ -317,7 +287,6 @@ func BenchmarkConcurrentCreateAndSearch(b *testing.B) {
 
 // Benchmark performance when searching users with different languages
 func BenchmarkSearchWithDifferentLanguages(b *testing.B) {
-	New()
 	defer Close()
 
 	for i := 0; i < 1000; i++ {
