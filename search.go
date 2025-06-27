@@ -1,14 +1,100 @@
 package search
 
 import (
-	"database/sql"
-	"fmt"
-	"strings"
+	"slices"
+	"sync"
 )
 
-type SearchResult struct {
-	ID     uint64
-	UserID uint64
+type SearchEntry struct {
+	ID        uint64
+	UserID    uint64
+	Language  string
+	YourStart int
+	YourEnd   int
+	YourSex   int
+	MyAge     int
+	MySex     int
+	Priority  bool
+	Interests []string
+}
+
+type memoryStore struct {
+	sync.RWMutex
+	entries map[uint64]*SearchEntry
+	index   map[string]map[int]map[uint64]*SearchEntry
+}
+
+var store *memoryStore
+
+func New() error {
+	store = &memoryStore{
+		entries: make(map[uint64]*SearchEntry),
+		index:   make(map[string]map[int]map[uint64]*SearchEntry),
+	}
+	return nil
+}
+
+func Close() {
+	store.Lock()
+	defer store.Unlock()
+	store.entries = make(map[uint64]*SearchEntry)
+	store.index = make(map[string]map[int]map[uint64]*SearchEntry)
+}
+
+func Create(
+	UserID uint64,
+	Language string,
+	YourStart int,
+	YourEnd int,
+	YourSex int,
+	MyAge int,
+	MySex int,
+	Priority bool,
+	interests ...string,
+) {
+
+	entry := &SearchEntry{
+		ID:        UserID,
+		UserID:    UserID,
+		Language:  Language,
+		YourStart: YourStart,
+		YourEnd:   YourEnd,
+		YourSex:   YourSex,
+		MyAge:     MyAge,
+		MySex:     MySex,
+		Priority:  Priority,
+		Interests: interests,
+	}
+
+	store.Lock()
+	defer store.Unlock()
+
+	if _, exists := store.index[Language]; !exists {
+		store.index[Language] = make(map[int]map[uint64]*SearchEntry)
+	}
+
+	if _, exists := store.index[Language][MySex]; !exists {
+		store.index[Language][MySex] = make(map[uint64]*SearchEntry)
+	}
+
+	delete(store.index[Language][MySex], UserID)
+	delete(store.entries, UserID)
+
+	store.index[Language][MySex][UserID] = entry
+	store.entries[UserID] = entry
+
+}
+
+func Delete(userID uint64) {
+
+	store.Lock()
+	defer store.Unlock()
+
+	if user, exists := store.entries[userID]; exists {
+		delete(store.index[user.Language][user.MySex], userID)
+		delete(store.entries, userID)
+	}
+
 }
 
 func Search(
@@ -20,78 +106,85 @@ func Search(
 	MyAge int,
 	MySex int,
 	interests ...string,
-) (*SearchResult, error) {
-	if core == nil || core.sql == nil {
-		return nil, ErrNotInitialize
+) *SearchEntry {
+	store.RLock()
+
+	var best *SearchEntry
+	maxScore := -1
+	var bestID uint64
+
+	sexes := []int{YourSex}
+	if YourSex == 2 {
+		sexes = []int{0, 1}
 	}
 
-	var queryBuilder strings.Builder
-	var args []interface{}
+	iterateUsers(Language, sexes, func(user *SearchEntry) {
+		if user.UserID == MyID {
+			return
+		}
+		if YourSex != 2 && YourSex != user.MySex {
+			return
+		}
+		if user.YourSex != 2 && user.YourSex != MySex {
+			return
+		}
 
-	queryBuilder.WriteString(`
-		SELECT id, user
-		FROM search
-		WHERE language = ?
-		AND ? BETWEEN your_start AND your_end        
-		AND (? = 2 OR your_sex = ? OR your_sex = 2)    
-		AND my_age BETWEEN ? AND ?                     
-		AND (? = 2 OR my_sex = ? OR my_sex = 2)       
-		AND user != ?                                
-	`)
+		score := 0
 
-	args = append(args,
-		Language,
-		MyAge,
-		MySex, MySex,
-		YourStart, YourEnd,
-		YourSex, YourSex,
-		MyID,
-	)
+		score += ageScore(MyAge, user.YourStart, user.YourEnd)
+		score += ageScore(user.MyAge, YourStart, YourEnd)
 
-	// Interests
-	if len(interests) > 0 {
-		var validInterests []string
-		for _, interest := range interests {
-			if core.interests[interest] {
-				validInterests = append(validInterests, fmt.Sprintf("(%s = 1)", interest))
+		if user.Priority {
+			score += 3
+		}
+
+		for _, myInterest := range interests {
+			if slices.Contains(user.Interests, myInterest) {
+				score++
 			}
 		}
 
-		if len(validInterests) > 0 {
-			queryBuilder.WriteString(" AND (")
-			queryBuilder.WriteString(strings.Join(validInterests, " OR "))
-			queryBuilder.WriteString(")")
-		} else {
-			return nil, nil
+		if score > maxScore {
+			best = user
+			maxScore = score
+			bestID = user.UserID
 		}
-	}
-
-	queryBuilder.WriteString(" ORDER BY priority DESC LIMIT 1")
-
-	// Use the passed context to ensure consistent timeout management
-	return query(Params{
-		Query: queryBuilder.String(),
-		Args:  args,
-	}, func(rows *sql.Rows) (*SearchResult, error) {
-
-		// Process the SQL result
-		if rows.Next() {
-			item := new(SearchResult)
-			err := rows.Scan(
-				&item.ID,
-				&item.UserID,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if item.UserID != 0 {
-				Delete(item.UserID)
-			}
-			return item, nil
-		}
-
-		// Return nil if no records are found
-		return nil, nil
 	})
+
+	store.RUnlock()
+
+	if best != nil {
+		Delete(bestID)
+	}
+
+	return best
+}
+
+func iterateUsers(
+	language string,
+	sexes []int,
+	process func(user *SearchEntry),
+) {
+	for _, sex := range sexes {
+		if entriesByPriority, ok := store.index[language][sex]; ok {
+			for _, user := range entriesByPriority {
+				process(user)
+			}
+		}
+	}
+}
+
+func ageScore(age, min, max int) int {
+	if age >= min && age <= max {
+		return 5
+	}
+	var diff int
+	if age < min {
+		diff = min - age
+	} else {
+		diff = age - max
+	}
+
+	return diff % 5
 
 }

@@ -1,229 +1,338 @@
 package search
 
 import (
+	"sync"
 	"testing"
 )
 
-func TestSearchIgnoreSex(t *testing.T) {
-	err := New(Config{
-		Interests: []string{
-			"music", "travel", "sport", "art", "cooking", "movies", "games",
-			"reading", "tech", "animals", "nature", "photography", "dance",
-			"space", "science", "history", "fashion", "yoga", "psychology",
-			"volunteering", "flirt", "crypto", "anime", "lgbt",
-		},
-	})
+func TestMain(m *testing.M) {
+	// Initialization before all tests
+	err := New()
 	if err != nil {
-		t.Fatalf("Error during initialization: %v", err)
+		panic("Initialization failed: " + err.Error())
 	}
 	defer Close()
 
-	// Create potential matches
-	Create(1, "en", 18, 30, 1, 25, 0, "music", "art") // User 1: Female
-	Create(2, "en", 18, 30, 1, 25, 1, "music", "art") // User 2: Male
+	m.Run()
+}
 
-	// Search with any gender
-	result, err := Search(3, "en", 18, 30, 2, 25, 1, "music")
-	if err != nil {
-		t.Fatalf("Error during search: %v", err)
+func TestCreateAndDelete(t *testing.T) {
+	// Create a record
+	Create(10, "ru", 20, 40, 1, 30, 0, false, "music", "art")
+	if _, exists := store.entries[10]; !exists {
+		t.Error("Record was not created")
 	}
 
-	// Since we allow any gender, we should get the result with the highest priority (which is arbitrary here)
-	if result == nil || (result.UserID != 1 && result.UserID != 2) {
-		t.Errorf("Expected to find a user of any gender, got %+v", result)
+	// Delete the record
+	Delete(10)
+	if _, exists := store.entries[10]; exists {
+		t.Error("Record was not deleted")
 	}
 }
 
-func TestSearchIgnoreSexNoInterests(t *testing.T) {
-	err := New(Config{
-		Interests: []string{
-			"music", "travel", "sport", "art", "cooking", "movies", "games",
-			"reading", "tech", "animals", "nature", "photography", "dance",
-			"space", "science", "history", "fashion", "yoga", "psychology",
-			"volunteering", "flirt", "crypto", "anime", "lgbt",
+func TestSearchAllConditions(t *testing.T) {
+	testCases := []struct {
+		name     string
+		setup    func()
+		params   []any
+		expected uint64
+	}{
+		{
+			name: "Language does not match",
+			setup: func() {
+				Create(1, "en", 18, 30, 0, 25, 1, false, "music")
+			},
+			params:   []any{2, "ru", 18, 30, 1, 25, 0, "music"},
+			expected: 0,
 		},
-	})
-	if err != nil {
-		t.Fatalf("Error during initialization: %v", err)
+		{
+			name: "Age is outside of preferred range",
+			setup: func() {
+				Create(1, "en", 18, 30, 0, 35, 1, false, "music")
+				Create(2, "en", 18, 30, 0, 17, 1, false, "music")
+			},
+			params:   []any{3, "en", 18, 30, 1, 40, 0, "music"},
+			expected: 2,
+		},
+		{
+			name: "Sex does not match",
+			setup: func() {
+				Create(3, "en", 18, 30, 1, 25, 1, false, "music")
+			},
+			params:   []any{4, "en", 18, 30, 0, 25, 0, "music"},
+			expected: 0,
+		},
+		{
+			name: "Match by interests",
+			setup: func() {
+				Create(4, "en", 18, 30, 1, 25, 0, false, "music", "art")
+			},
+			params:   []any{5, "en", 18, 30, 0, 25, 1, "music"},
+			expected: 4,
+		},
+		{
+			name: "Best match by number of interests",
+			setup: func() {
+				Create(6, "en", 18, 30, 0, 25, 1, false, "music")
+				Create(7, "en", 18, 30, 1, 25, 0, false, "music", "art")
+			},
+			params:   []any{8, "en", 18, 30, 0, 25, 1, "music", "art"},
+			expected: 7,
+		},
+		{
+			name: "Any sex (2) is accepted",
+			setup: func() {
+				Create(9, "en", 18, 30, 0, 25, 1, false, "music")
+			},
+			params:   []any{10, "en", 18, 30, 2, 25, 0, "music"},
+			expected: 9,
+		},
+		{
+			name: "Any sex (2) rejected because user requires specific sex",
+			setup: func() {
+				Create(10, "en", 18, 30, 1, 25, 1, false, "music")
+			},
+			params:   []any{11, "en", 18, 30, 2, 25, 0, "music"},
+			expected: 0,
+		},
+		{
+			name: "Priority affects score",
+			setup: func() {
+				Create(11, "en", 18, 30, 0, 25, 1, false, "music")
+				Create(12, "en", 18, 30, 0, 25, 1, true, "music")
+			},
+			params:   []any{13, "en", 18, 30, 1, 25, 0, "music"},
+			expected: 12,
+		},
+		{
+			name: "User cannot match with self",
+			setup: func() {
+				Create(12, "en", 18, 30, 1, 25, 1, false, "music")
+			},
+			params:   []any{12, "en", 18, 30, 1, 25, 1, "music"},
+			expected: 0,
+		},
 	}
-	defer Close()
 
-	// Create potential matches
-	Create(1, "en", 18, 30, 1, 25, 0) // User 1: Female
-	Create(2, "en", 18, 30, 1, 25, 1) // User 2: Male
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Reset store for each test
+			Close()
+			New()
+			defer Close()
 
-	// Search with any gender and no specific interests
-	result, err := Search(3, "en", 18, 30, 2, 25, 1)
-	if err != nil {
-		t.Fatalf("Error during search: %v", err)
-	}
+			if tc.setup != nil {
+				tc.setup()
+			}
 
-	// Since we allow any gender, we should get the result with the highest priority (which is arbitrary here)
-	if result == nil || (result.UserID != 1 && result.UserID != 2) {
-		t.Errorf("Expected to find a user of any gender, got %+v", result)
+			// Extract parameters
+			myID := uint64(tc.params[0].(int))
+			lang := tc.params[1].(string)
+			yourStart := tc.params[2].(int)
+			yourEnd := tc.params[3].(int)
+			yourSex := tc.params[4].(int)
+			myAge := tc.params[5].(int)
+			mySex := tc.params[6].(int)
+
+			var interests []string
+			if len(tc.params) > 8 {
+				for _, p := range tc.params[7:] {
+					interests = append(interests, p.(string))
+				}
+			}
+
+			result := Search(myID, lang, yourStart, yourEnd, yourSex, myAge, mySex, interests...)
+
+			if tc.expected == 0 {
+				if result != nil {
+					t.Errorf("Expected nil, got %v", result)
+				}
+			} else {
+				if result == nil {
+					t.Errorf("Expected UserID %d, got nil", tc.expected)
+				} else if result.UserID != tc.expected {
+					t.Errorf("Expected UserID %d, got %d", tc.expected, result.UserID)
+				}
+			}
+		})
 	}
 }
 
-func TestSearch(t *testing.T) {
-	err := New(Config{
-		Interests: []string{
-			"music", "travel", "sport", "art", "cooking", "movies", "games",
-			"reading", "tech", "animals", "nature", "photography", "dance",
-			"space", "science", "history", "fashion", "yoga", "psychology",
-			"volunteering", "flirt", "crypto", "anime", "lgbt",
-		},
-	})
+func TestNewAndClose(t *testing.T) {
+	err := New()
 	if err != nil {
-		t.Fatalf("Error during initialization: %v", err)
-	}
-	defer Close()
-
-	// Create potential matches
-	Create(
-		1,    // ID user
-		"ru", // Language
-		39,   // Search Age 25 - 31
-		45,   // Search Age 25 - 31
-		1,    // Search Sex 0 - man | 1 - woman | 2 - any
-		32,   // My Age 18
-		0,    // My Sex 0 - man | 1 - woman | 2 - any
-	) // User 1: Female
-
-	// Search with any gender and no specific interests
-	result, err := Search(
-		2,    // ID user
-		"ru", // Language
-		32,   // Search Age 18 - 24
-		38,   // Search Age 18 - 24
-		0,    // Search Sex
-		39,   // My Age 25
-		1,    // My Sex 0 - man | 1 - woman | 2 - any
-	)
-	if err != nil {
-		t.Fatalf("Error during search: %v", err)
+		t.Errorf("New() returned error: %v", err)
 	}
 
-	// Since we allow any gender, we should get the result with the highest priority (which is arbitrary here)
-	if result == nil || (result.UserID != 1 && result.UserID != 2) {
-		t.Errorf("Expected to find a user of any gender, got %+v", result)
+	Close()
+	if len(store.entries) != 0 {
+		t.Error("Store was not cleared after Close()")
 	}
 }
 
-func TestClose(t *testing.T) {
-
-	err := New(Config{
-		Interests: []string{
-			"music", "travel", "sport", "art", "cooking", "movies", "games",
-			"reading", "tech", "animals", "nature", "photography", "dance",
-			"space", "science", "history", "fashion", "yoga", "psychology",
-			"volunteering", "flirt", "crypto", "anime", "lgbt",
-		},
-	})
-	if err != nil {
-		t.Fatalf("Error during initialization: %v", err)
-	}
-	defer Close()
-
-	// Create potential matches
-	Create(
-		1,    // ID user
-		"ru", // Language
-		39,   // Search Age 25 - 31
-		45,   // Search Age 25 - 31
-		1,    // Search Sex 0 - man | 1 - woman | 2 - any
-		32,   // My Age 18
-		0,    // My Sex 0 - man | 1 - woman | 2 - any
-	) // User 1: Female
-
-    err = Delete(1)
-    if err != nil {
-        t.Fatalf("Error delete: %v", err)
-    }
-
-    	// Search with any gender and no specific interests
-	result, err := Search(
-		2,    // ID user
-		"ru", // Language
-		32,   // Search Age 18 - 24
-		38,   // Search Age 18 - 24
-		0,    // Search Sex
-		39,   // My Age 25
-		1,    // My Sex 0 - man | 1 - woman | 2 - any
-	)
-	if err != nil {
-		t.Fatalf("Error during search: %v", err)
+func TestEdgeCases(t *testing.T) {
+	// User with no interests
+	Create(11, "en", 18, 30, 1, 25, 0, false)
+	if len(store.entries[11].Interests) != 0 {
+		t.Error("Expected empty interests")
 	}
 
-	// Since we allow any gender, we should get the result with the highest priority (which is arbitrary here)
-	if result != nil{
-		t.Errorf("can't find user: %v", result)
+	// Search with no interests
+	result := Search(13, "en", 18, 30, 1, 25, 0)
+	if result != nil {
+		t.Error("Expected nil when searching with no interests")
 	}
-
 }
 
-// Benchmarks for the Search function with specific interests
-func BenchmarkSearchWithInterests(b *testing.B) {
-	err := New(Config{
-		Reset: false,
-		Interests: []string{
-			"music", "travel", "sport", "art", "cooking", "movies", "games",
-			"reading", "tech", "animals", "nature", "photography", "dance",
-			"space", "science", "history", "fashion", "yoga", "psychology",
-			"volunteering", "flirt", "crypto", "anime", "lgbt",
-		},
-	})
-	if err != nil {
-		b.Fatalf("Error during initialization: %v", err)
-	}
+func TestRaceConditions(t *testing.T) {
+	Close()
+	New()
 	defer Close()
 
-	// Insert records to search for
-	err = Create(1, "en", 18, 30, 1, 25, 1, "music", "travel", "art")
-	if err != nil {
-		b.Fatalf("Error during record creation for benchmark: %v", err)
+	done := make(chan bool)
+
+	// 10 goroutines creating records
+	for i := 0; i < 10; i++ {
+		go func(id int) {
+			Create(uint64(id), "en", 20, 30, 1, 25, 0, false, "music")
+			done <- true
+		}(i)
 	}
 
-	err = Create(2, "en", 18, 30, 1, 25, 1, "movies", "science", "tech")
-	if err != nil {
-		b.Fatalf("Error during record creation for benchmark: %v", err)
+	// 10 goroutines deleting records
+	for i := 0; i < 10; i++ {
+		go func(id int) {
+			Delete(uint64(id))
+			done <- true
+		}(i)
 	}
 
-	b.ResetTimer() // Reset the timer to exclude setup time
+	// 10 goroutines searching
+	for i := 0; i < 10; i++ {
+		go func(id int) {
+			Search(uint64(100+id), "en", 18, 30, 1, 25, 0, "music")
+			done <- true
+		}(i)
+	}
+
+	// Wait for all routines to complete
+	for i := 0; i < 30; i++ {
+		<-done
+	}
+}
+
+// Benchmark how fast we can create N users
+func BenchmarkCreate(b *testing.B) {
+	New()
+	defer Close()
+
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := Search(3, "en", 18, 30, 1, 1, 25, "music", "art")
-		if err != nil {
-			b.Fatalf("Error during search with interests: %v", err)
-		}
+		Create(uint64(i), "en", 18, 30, i%3, 25, i%2, false, "music", "art", "games")
 	}
 }
 
-// Benchmarks for the Search function without specific interests
-func BenchmarkSearch(b *testing.B) {
-	err := New(Config{
-		Reset: false,
-		Interests: []string{
-			"music", "travel", "sport", "art", "cooking", "movies", "games",
-			"reading", "tech", "animals", "nature", "photography", "dance",
-			"space", "science", "history", "fashion", "yoga", "psychology",
-			"volunteering", "flirt", "crypto", "anime", "lgbt",
-		},
-	})
-	if err != nil {
-		b.Fatalf("Error during initialization: %v", err)
-	}
+// Benchmark search performance with only 1 user in the system
+func BenchmarkSearchSingleUser(b *testing.B) {
+	New()
 	defer Close()
 
-	// Insert a record to search for
-	err = Create(1, "en", 18, 30, 1, 25, 1, "music", "travel", "art")
-	if err != nil {
-		b.Fatalf("Error during record creation for benchmark: %v", err)
+	Create(1, "en", 18, 30, 1, 25, 0, false, "music", "art")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Search(2, "en", 18, 30, 1, 25, 0, "music", "art")
+	}
+}
+
+// Benchmark search with many users (1000)
+func BenchmarkSearchMultipleUsers(b *testing.B) {
+	New()
+	defer Close()
+
+	for i := 0; i < 1000; i++ {
+		Create(uint64(i), "en", 18+i%10, 30+i%10, i%3, 20+i%10, i%2,
+			false, "music", "art", "games", "science")
 	}
 
-	b.ResetTimer() // Reset the timer to exclude setup time
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := Search(2, "en", 18, 30, 1, 1, 25)
-		if err != nil {
-			b.Fatalf("Error during search: %v", err)
+		Search(1001, "en", 18, 30, 1, 25, 0, "music", "art")
+	}
+}
+
+// Benchmark with many interests on both sides
+func BenchmarkSearchWithManyInterests(b *testing.B) {
+	New()
+	defer Close()
+
+	for i := 0; i < 1000; i++ {
+		interests := []string{"music", "art"}
+		if i%2 == 0 {
+			interests = append(interests, "games")
 		}
+		if i%3 == 0 {
+			interests = append(interests, "science")
+		}
+		if i%5 == 0 {
+			interests = append(interests, "sports")
+		}
+
+		Create(uint64(i), "en", 18+i%10, 30+i%10, i%3, 20+i%10, i%2, false, interests...)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Search(1001, "en", 18, 30, 1, 25, 0, "music", "art", "games", "science", "sports")
+	}
+}
+
+// Benchmark concurrent Create + Search to simulate real-world parallel load
+func BenchmarkConcurrentCreateAndSearch(b *testing.B) {
+	New()
+	defer Close()
+
+	var wg sync.WaitGroup
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wg.Add(2)
+
+		// One goroutine creates a user
+		go func(id int) {
+			defer wg.Done()
+			Create(uint64(id), "en", 18, 30, id%3, 25, id%2, false, "music", "art")
+		}(i)
+
+		// One goroutine runs a search
+		go func(id int) {
+			defer wg.Done()
+			if id > 10 { // delay to ensure some users exist before searching
+				Search(uint64(id+1), "en", 18, 30, 1, 25, 0, "music", "art")
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// Benchmark performance when searching users with different languages
+func BenchmarkSearchWithDifferentLanguages(b *testing.B) {
+	New()
+	defer Close()
+
+	for i := 0; i < 1000; i++ {
+		lang := "en"
+		if i%2 == 0 {
+			lang = "fr"
+		}
+		if i%3 == 0 {
+			lang = "de"
+		}
+		Create(uint64(i), lang, 18+i%10, 30+i%10, i%3, 20+i%10, i%2, false, "music", "art")
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Search(1001, "en", 18, 30, 1, 25, 0, "music", "art")
 	}
 }
