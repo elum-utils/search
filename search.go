@@ -143,7 +143,7 @@ func Search(
 			}
 		}
 
-		if score > maxScore {
+		if score > 0 && score > maxScore {
 			best = user
 			maxScore = score
 			bestID = user.UserID
@@ -173,17 +173,26 @@ func iterateUsers(
 	}
 }
 
-func ageScore(age, min, max int) int {
-	if age >= min && age <= max {
+func ageScore(age, mi, ma int) int {
+	if age >= mi && age <= ma {
 		return 5
 	}
+
 	var diff int
-	if age < min {
-		diff = min - age
+	if age < mi {
+		diff = mi - age
 	} else {
-		diff = age - max
+		diff = age - ma
 	}
 
-	return diff % 5
+	if diff > 15 {
+		return 0
+	}
 
+	score := 5 - (diff / 3)
+	if score < 0 {
+		return 0
+	}
+
+	return score
 }

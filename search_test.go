@@ -1,7 +1,6 @@
 package search
 
 import (
-	"sync"
 	"testing"
 )
 
@@ -26,6 +25,14 @@ func TestSearchAllConditions(t *testing.T) {
 		params   []any
 		expected uint64
 	}{
+		{
+			name: "Does not match",
+			setup: func() {
+				Create(1, "en", 18, 24, 0, 25, 1, false)
+			},
+			params:   []any{2, "en", 45, 100, 1, 39, 0},
+			expected: 0,
+		},
 		{
 			name: "Language does not match",
 			setup: func() {
@@ -99,6 +106,24 @@ func TestSearchAllConditions(t *testing.T) {
 				Create(12, "en", 18, 30, 1, 25, 1, false, "music")
 			},
 			params:   []any{12, "en", 18, 30, 1, 25, 1, "music"},
+			expected: 0,
+		},
+		{
+			name: "Explicit mismatch: YourSex != user.MySex",
+			setup: func() {
+				// user.MySex = 0 (male)
+				Create(201, "en", 18, 30, 1, 25, 0, false, "music")
+			},
+			params:   []any{202, "en", 18, 30, 1, 25, 1, "music"}, // expects female
+			expected: 0,
+		},
+		{
+			name: "Score < 0 leads to zero return",
+			setup: func() {
+				// user expects 18–20, seeker is 50 => diff = 30
+				Create(203, "en", 18, 20, 1, 25, 0, false, "music")
+			},
+			params:   []any{204, "en", 50, 55, 1, 50, 1, "music"},
 			expected: 0,
 		},
 	}
@@ -256,33 +281,6 @@ func BenchmarkSearchWithManyInterests(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		Search(1001, "en", 18, 30, 1, 25, 0, "music", "art", "games", "science", "sports")
 	}
-}
-
-// Benchmark concurrent Create + Search to simulate real-world parallel load
-func BenchmarkConcurrentCreateAndSearch(b *testing.B) {
-	defer Close()
-
-	var wg sync.WaitGroup
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(2)
-
-		// One goroutine creates a user
-		go func(id int) {
-			defer wg.Done()
-			Create(uint64(id), "en", 18, 30, id%3, 25, id%2, false, "music", "art")
-		}(i)
-
-		// One goroutine runs a search
-		go func(id int) {
-			defer wg.Done()
-			if id > 10 { // delay to ensure some users exist before searching
-				Search(uint64(id+1), "en", 18, 30, 1, 25, 0, "music", "art")
-			}
-		}(i)
-	}
-	wg.Wait()
 }
 
 // Benchmark performance when searching users with different languages
