@@ -30,7 +30,7 @@ It provides fast `Create`, `Search`, and `Delete` operations with zero allocatio
 
 ```bash
 go get github.com/elum-utils/search
-````
+```
 
 ---
 
