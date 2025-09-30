@@ -2,9 +2,47 @@ package search
 
 import (
 	"testing"
+	"time"
 )
 
+func TestDuplicate(t *testing.T) {
+
+	SetTimeout(5 * time.Second)
+
+	t.Run("successful search after creation", func(t *testing.T) {
+		Create(12, "en", 18, 30, 0, 25, 1, true, "music")
+
+		user := Search(13, "en", 18, 30, 1, 25, 0, "music")
+		if user == nil {
+			t.Error("Should find user after creation")
+		}
+	})
+
+	t.Run("duplicate creation prevents search", func(t *testing.T) {
+		Create(12, "en", 18, 30, 0, 25, 1, true, "music")
+
+		user := Search(13, "en", 18, 30, 1, 25, 0, "music")
+		if user != nil {
+			t.Error("Should not find user after duplicate creation")
+		}
+	})
+
+	t.Run("successful search after timeout", func(t *testing.T) {
+		time.Sleep(6 * time.Second)
+
+		Create(12, "en", 18, 30, 0, 25, 1, true, "music")
+
+		user := Search(13, "en", 18, 30, 1, 25, 0, "music")
+		if user == nil {
+			t.Error("Should find user after timeout expiration")
+		}
+	})
+
+}
+
 func TestCreateAndDelete(t *testing.T) {
+
+	SetTimeout(0)
 	// Create a record
 	Create(10, "ru", 20, 40, 1, 30, 0, false, "music", "art")
 	if _, exists := store.entries[10]; !exists {
@@ -19,6 +57,9 @@ func TestCreateAndDelete(t *testing.T) {
 }
 
 func TestSearchAllConditions(t *testing.T) {
+
+	SetTimeout(0)
+
 	testCases := []struct {
 		name     string
 		setup    func()
@@ -172,6 +213,8 @@ func TestSearchAllConditions(t *testing.T) {
 }
 
 func TestEdgeCases(t *testing.T) {
+
+	SetTimeout(0)
 	// User with no interests
 	Create(11, "en", 18, 30, 1, 25, 0, false)
 	if len(store.entries[11].Interests) != 0 {
@@ -186,8 +229,12 @@ func TestEdgeCases(t *testing.T) {
 }
 
 func TestRaceConditions(t *testing.T) {
+
 	Close()
 	defer Close()
+
+	SetTimeout(0)
+	defer SetTimeout(0)
 
 	done := make(chan bool)
 
@@ -223,6 +270,7 @@ func TestRaceConditions(t *testing.T) {
 
 // Benchmark how fast we can create N users
 func BenchmarkCreate(b *testing.B) {
+	SetTimeout(0)
 	defer Close()
 
 	b.ResetTimer()
@@ -233,6 +281,7 @@ func BenchmarkCreate(b *testing.B) {
 
 // Benchmark search performance with only 1 user in the system
 func BenchmarkSearchSingleUser(b *testing.B) {
+	SetTimeout(0)
 	defer Close()
 
 	Create(1, "en", 18, 30, 1, 25, 0, false, "music", "art")
@@ -245,6 +294,7 @@ func BenchmarkSearchSingleUser(b *testing.B) {
 
 // Benchmark search with many users (1000)
 func BenchmarkSearchMultipleUsers(b *testing.B) {
+	SetTimeout(0)
 	defer Close()
 
 	for i := 0; i < 1000; i++ {
@@ -260,6 +310,7 @@ func BenchmarkSearchMultipleUsers(b *testing.B) {
 
 // Benchmark with many interests on both sides
 func BenchmarkSearchWithManyInterests(b *testing.B) {
+	SetTimeout(0)
 	defer Close()
 
 	for i := 0; i < 1000; i++ {
@@ -285,6 +336,7 @@ func BenchmarkSearchWithManyInterests(b *testing.B) {
 
 // Benchmark performance when searching users with different languages
 func BenchmarkSearchWithDifferentLanguages(b *testing.B) {
+	SetTimeout(0)
 	defer Close()
 
 	for i := 0; i < 1000; i++ {

@@ -3,6 +3,7 @@ package search
 import (
 	"slices"
 	"sync"
+	"time"
 )
 
 type SearchEntry struct {
@@ -22,21 +23,70 @@ type memoryStore struct {
 	sync.RWMutex
 	entries map[uint64]*SearchEntry
 	index   map[string]map[int]map[uint64]*SearchEntry
+	history map[uint64]map[uint64]time.Time
+	timeout time.Duration
+	delay   time.Duration
 }
 
-var store *memoryStore = &memoryStore{
-	entries: make(map[uint64]*SearchEntry),
-	index:   make(map[string]map[int]map[uint64]*SearchEntry),
+var (
+	cleanupOnce sync.Once
+	store       *memoryStore = &memoryStore{
+		entries: make(map[uint64]*SearchEntry),
+		index:   make(map[string]map[int]map[uint64]*SearchEntry),
+		history: make(map[uint64]map[uint64]time.Time),
+		timeout: 0,
+		delay:   time.Minute,
+	}
+)
+
+func init() {
+	cleanupOnce.Do(func() {
+		go func() {
+			for range time.Tick(store.delay) {
+				cleanupExpiredHistory()
+			}
+		}()
+	})
+}
+
+func cleanupExpiredHistory() {
+	store.Lock()
+	defer store.Unlock()
+
+	now := time.Now()
+	for userID, historyMap := range store.history {
+		for otherUserID, expireTime := range historyMap {
+			if now.After(expireTime) {
+				delete(historyMap, otherUserID)
+			}
+		}
+		if len(historyMap) == 0 {
+			delete(store.history, userID)
+		}
+	}
+}
+
+func SetTimeout(d time.Duration) {
+	store.Lock()
+	defer store.Unlock()
+	store.timeout = d
+}
+
+func SetDelay(d time.Duration) {
+	store.Lock()
+	defer store.Unlock()
+	store.delay = d
 }
 
 func Close() {
 	store.Lock()
 	defer store.Unlock()
 
-	store = &memoryStore{
-		entries: make(map[uint64]*SearchEntry),
-		index:   make(map[string]map[int]map[uint64]*SearchEntry),
-	}
+	store.entries = make(map[uint64]*SearchEntry)
+	store.index = make(map[string]map[int]map[uint64]*SearchEntry)
+	store.history = make(map[uint64]map[uint64]time.Time)
+	store.timeout = 5 * time.Minute
+	store.delay = time.Minute
 
 }
 
@@ -128,8 +178,11 @@ func Search(
 			return
 		}
 
-		score := 0
+		if isBlocked(MyID, user.UserID) {
+			return
+		}
 
+		score := 0
 		score += ageScore(MyAge, user.YourStart, user.YourEnd)
 		score += ageScore(user.MyAge, YourStart, YourEnd)
 
@@ -153,6 +206,7 @@ func Search(
 	store.RUnlock()
 
 	if best != nil {
+		addToHistory(MyID, bestID)
 		Delete(bestID)
 	}
 
@@ -195,4 +249,43 @@ func ageScore(age, mi, ma int) int {
 	}
 
 	return score
+}
+
+func isBlocked(a, b uint64) bool {
+	store.RLock()
+	defer store.RUnlock()
+
+	if store.timeout == 0 {
+		return false
+	}
+
+	if m, ok := store.history[a]; ok {
+		if t, ok2 := m[b]; ok2 {
+			if time.Now().Before(t) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func addToHistory(a, b uint64) {
+	store.Lock()
+	defer store.Unlock()
+
+	if store.timeout == 0 {
+		return
+	}
+
+	expire := time.Now().Add(store.timeout)
+
+	if _, ok := store.history[a]; !ok {
+		store.history[a] = make(map[uint64]time.Time)
+	}
+	if _, ok := store.history[b]; !ok {
+		store.history[b] = make(map[uint64]time.Time)
+	}
+
+	store.history[a][b] = expire
+	store.history[b][a] = expire
 }
